@@ -6,6 +6,7 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 from ingest.log_info import LogInfo, FrameData
+from pathlib import Path
 
 # CONSTANTS
 RADIANS = np.pi / 180
@@ -32,7 +33,6 @@ RADIANS = np.pi / 180
     ]
 }
 '''
-
 
 def parse_log_file(log_file_path: str | Path):
     log_file_path = Path(log_file_path)
@@ -136,6 +136,66 @@ def save_parsed_logs(parsed_logs: list[LogInfo], file_path_name: str):
         df = pd.DataFrame(rows)
         df.to_parquet(output_path, index=False)
 
+def resample_to_60hz(parquet_path: Path):
+    """Create a uniform 60 Hz timeline and interpolate pitch/roll/yaw."""
+    df = pd.read_parquet(parquet_path)
+
+    # Raw time
+    t_raw = df["sec"].to_numpy()
+    duration = df["video_length_s"].iloc[0]
+    t_uniform = np.arange(0, duration, 1/60.0)  # 60 Hz timeline
+
+    # Handle yaw, interpolation
+    yaw_raw = df["yaw"].to_numpy()
+    yaw_rad = np.deg2rad(yaw_raw) if np.max(np.abs(yaw_raw)) > np.pi else yaw_raw
+    yaw_unwrapped = np.unwrap(yaw_rad)
+    yaw_interp = np.interp(t_uniform, t_raw, yaw_unwrapped)
+    yaw_resampled = ((yaw_interp + np.pi) % (2*np.pi)) - np.pi
+
+    # Interpolate pitch and roll
+    pitch_resampled = np.interp(t_uniform, t_raw, df["pitch"])
+    roll_resampled  = np.interp(t_uniform, t_raw, df["roll"])
+
+    df_60hz = pd.DataFrame({
+        "time_s": t_uniform,
+        "pitch": pitch_resampled,
+        "roll":  roll_resampled,
+        "yaw":   yaw_resampled
+    })
+
+    out_path = parquet_path.with_name(parquet_path.stem + "_60hz.parquet")
+    df_60hz.to_parquet(out_path, index=False)
+    print(f"✅ 60 Hz resampled data saved to {out_path}")
+
+
+def calculate_angular_velocity(parquet_path):
+    """ Calculate angular velocities (radians/sec) for pitch, roll, and yaw on resampled 60 Hz data."""
+
+    df = pd.read_parquet(parquet_path)
+
+    # Constant time step
+    dt = 1 / 60.0
+
+    # Angular velocity for each angle
+    df["pitch_velocity"] = df["pitch"].diff() / dt
+    df["roll_velocity"]  = df["roll"].diff() / dt
+
+    # For yaw
+    dyaw = np.diff(df["yaw"].to_numpy(), prepend=df["yaw"].iloc[0])
+    dyaw = (dyaw + np.pi) % (2*np.pi) - np.pi  # unwrap tiny jumps
+    df["yaw_velocity"] = dyaw / dt
+
+    df.iloc[0, df.columns.get_loc("pitch_velocity")] = 0
+    df.iloc[0, df.columns.get_loc("roll_velocity")]  = 0
+    df.iloc[0, df.columns.get_loc("yaw_velocity")]   = 0
+
+    out_path = parquet_path.with_name(parquet_path.stem + "_vel.parquet")
+    df.to_parquet(out_path, index=False)
+    print(f"✅ Angular velocities saved to: {out_path}")
+
+    return df
+
+
 
 def run(log_file_path: Path, debugging: bool = False):
     debugging_statements(f"Parsing log file: {log_file_path}", debugging)
@@ -146,6 +206,14 @@ def run(log_file_path: Path, debugging: bool = False):
 
     save_parsed_logs(normalized_logs, log_file_path)
     debugging_statements(f"Saved parsed logs", debugging)
+
+    user = Path(log_file_path).stem
+    clip = Path(parsed_logs[0].filename).stem
+    parquet_path = Path(f"data/standardized/user{user}_clip{clip}.parquet")
+    resample_to_60hz(parquet_path)
+
+    vel_source = parquet_path.with_name(parquet_path.stem + "_60hz.parquet")
+    calculate_angular_velocity(vel_source)
 
 # function for debugging statements on/off
 
