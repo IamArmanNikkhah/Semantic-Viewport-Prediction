@@ -44,6 +44,8 @@ def parse_log_file(log_file_path: str | Path):
         return parse_csv_log(log_file_path)
 
 # This function parses JSON log files
+
+
 def parse_json_log(log_file_path) -> list[LogInfo]:
     # opening the JSON file
     with open(log_file_path, "r") as f:
@@ -74,9 +76,12 @@ def parse_json_log(log_file_path) -> list[LogInfo]:
     return parsed_logs
 
 # NOT IMPLEMENETED YET
+
+
 def parse_csv_log(log_file_path) -> list[LogInfo]:
     """TODO: Implement CSV log parsing logic."""""
     raise NotImplementedError("CSV log parsing not yet implemented")
+
 
 def normalize_logs(logs: list[LogInfo]) -> list[LogInfo]:
     for log in logs:
@@ -102,19 +107,21 @@ def normalize_logs(logs: list[LogInfo]) -> list[LogInfo]:
             frame.roll = roll_rad
     return logs
 
+
 # saving the data of the parsed log into a paraquet file
 def save_parsed_logs(parsed_logs: list[LogInfo], file_path_name: str):
-
-    # user#_clip# where user is the filename without extension and clip is the filename in the log
-    user = Path(file_path_name).stem
-    clip = Path(parsed_logs[0].filename).stem
-    output_pair = f"data/standardized/user{user}_clip{clip}.parquet"
-    output_path = Path(output_pair)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    all_data = []
+    user = Path(file_path_name).stem  # get the filename without extension
     for log in parsed_logs:
+        # get the video filename without extension
+        clip = Path(log.filename).stem
+        output_path = Path(f"data/standardized/user{user}_clip{clip}.parquet")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        rows = []
         for frame in log.data:
-            all_data.append({
+            rows.append({
+                "user": user,
+                "clip": clip,
                 "filename": log.filename,
                 "hmd": log.hmd,
                 "pitch": frame.pitch,
@@ -123,10 +130,11 @@ def save_parsed_logs(parsed_logs: list[LogInfo], file_path_name: str):
                 "yaw": frame.yaw,
                 "log_type": log.log_type,
                 "label": log.label,
-                "video_length_s": log.video_length_s
+                "video_length_s": log.video_length_s,
             })
-    df = pd.DataFrame(all_data)
-    df.to_parquet(output_path, index=False)
+
+        df = pd.DataFrame(rows)
+        df.to_parquet(output_path, index=False)
 
 
 def run(log_file_path: Path, debugging: bool = False):
@@ -140,6 +148,7 @@ def run(log_file_path: Path, debugging: bool = False):
     debugging_statements(f"Saved parsed logs", debugging)
 
 # function for debugging statements on/off
+
 
 def debugging_statements(message: str, debug: bool = False):
     if debug:
