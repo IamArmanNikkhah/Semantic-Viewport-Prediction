@@ -62,3 +62,53 @@ Execute the main simulation script from the root of the project directory:
 ```bash
 python main.py --mode proposed --user U01 --video V01 --network-trace traces/trace1.json
 ```
+
+---
+
+### AVTrack360 Ingestion & Alignment (Week 1)
+
+We ingest AVTrack360 head–motion logs and standardize them under data/standardized/.
+
+1. Parse and standardize
+
+    python -m ingest.scripts.avtrack360_loader data/raw/avtrack360/10.json --debugging
+
+This produces (example):
+
+    data/standardized/user10_clip6.parquet – normalized angles + raw timestamps (sec)
+    data/standardized/user10_clip6_60hz.parquet – resampled to a uniform 60 Hz timeline (time_s)
+    data/standardized/user10_clip6_60hz_vel.parquet – angular velocities on the 60 Hz grid
+
+2. Alignment report (data health check)
+
+    python -m ingest.scripts.make_alignment_report \
+        data/raw/avtrack360/10.json \
+        --clip 6 \
+        --user 10
+
+This generates:
+
+    reports/alignment/user10_clip6/user10_clip6_alignment.json
+    reports/alignment/user10_clip6/user10_clip6_alignment.png
+    reports/alignment/user10_clip6/user10_clip6_summary.md
+
+The report includes:
+
+    raw sampling interval histogram (Δt in ms)
+    raw timestamp vs sample index (“drift”)
+    angle sanity ranges (raw deg + normalized rad)
+    60 Hz cadence check
+    a heuristic missing–data estimate
+
+3. Dev subset
+
+For quick experiments, we use a pre-processed slice:
+
+    data/dev/avtrack360_user10_clip6/
+        raw/10.json
+        standardized/{user10_clip6.parquet, user10_clip6_60hz.parquet, user10_clip6_60hz_vel.parquet}
+        reports/{user10_clip6_alignment.json, user10_clip6_alignment.png, user10_clip6_summary.md}
+
+All early modules (FoV predictor, bandit, ABR) can be developed against this dev subset.
+
+---
