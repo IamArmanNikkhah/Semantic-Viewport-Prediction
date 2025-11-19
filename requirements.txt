@@ -19,17 +19,17 @@ ffmpeg-python>=0.2.0
 timm>=1.0.0
 transformers>=4.44.0
 open-clip-torch>=2.24.0
-groundingdino>=0.1.0
+#groundingdino>=0.1.0
 segment-anything>=1.0
 openai-whisper>=20231117
 pyannote.audio>=3.0.0
 
 # --- Metrics & Image Processing ---
-scikit-image>=0.22```
+scikit-image>=0.22
 
 #### Development File: `requirements-dev.txt`
-(This includes tools for testing, linting, and analysis.)
-```txt
+# (This includes tools for testing, linting, and analysis.)
+# ```txt
 # requirements-dev.txt
 # Tools for development, testing, and analysis. Install with: pip install -r requirements-dev.txt
 
