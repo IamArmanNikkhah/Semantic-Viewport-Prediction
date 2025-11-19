@@ -31,7 +31,7 @@ def parse_csv_log(log_file_path) -> list[Detection]:
 
 # STEP 2: creating a grid per detection second from the detection list (which is per clip)
 # the grid is S[t] in the shape of (K, 6, 12) where K is the number of semantic classes
-def accumulate_grids(clip_detections: list[Detection]) -> dict[int,np.ndarray]:
+def accumulate_grids(clip_detections: list[Detection], temperature: float = 1.5) -> dict[int,np.ndarray]:
     S = {} # hold all the grids per second of the clip
 
     # if there is not a grid for second t, create one, else use the existing one
@@ -48,17 +48,17 @@ def accumulate_grids(clip_detections: list[Detection]) -> dict[int,np.ndarray]:
         row = detection.tile_id // COLUMNS
         col = detection.tile_id % COLUMNS
 
-        # accumulate the confidence
-        S[t][semantic_number, row, col] += detection.confidence
+        # temperature scaling for confidence
+        scaled_confidence = detection.confidence ** (1 / temperature)
+        S[t][semantic_number, row, col] += scaled_confidence
 
     return S
 
 
-def run(log_file_path: Path, debugging: bool = False):
+def run(log_file_path: Path, debugging: bool = False, temperature: float = 1.5):
     clip = semantic_data_loader(log_file_path)
-    
-    grids = accumulate_grids(clip)
-    debugging_statements(f"Generated grids for clip from file: {log_file_path} grids: {grids.keys()}")
+    grids = accumulate_grids(clip, temperature=temperature)
+    debugging_statements(f"Generated grids for clip from file: {log_file_path} grids: {grids.keys()}", debug=debugging)
 
 def debugging_statements(message: str, debug: bool = False):
     if debug:
@@ -71,6 +71,8 @@ def parse_arguments():
                         help="Path to the log file to parse.")
     parser.add_argument("--debugging", action="store_true",
                         help="Enable debugging statements output")
+    parser.add_argument("--temperature", type=float, default=1.5,
+                        help="Temperature for confidence scaling (default: 1.5)")
     return parser.parse_args()
 
 if __name__ == "__main__":
