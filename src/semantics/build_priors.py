@@ -48,17 +48,48 @@ def accumulate_grids(clip_detections: list[Detection], temperature: float = 1.5)
         row = detection.tile_id // COLUMNS
         col = detection.tile_id % COLUMNS
 
-        # temperature scaling for confidence
+        #STEP 3: Temperature scaling for confidence
         scaled_confidence = detection.confidence ** (1 / temperature)
         S[t][semantic_number, row, col] += scaled_confidence
 
     return S
 
+# STEP 4: Temporal smoothing using Exponential Moving Average (EMA)
+def smooth_grids(S: dict[int, np.ndarray], alpha: float = 0.6) -> dict[int, np.ndarray]:
+    P_sem = {}
+    prev = None
 
-def run(log_file_path: Path, debugging: bool = False, temperature: float = 1.5):
+    for t in sorted(S.keys()):
+        if prev is None:
+            # First second has no history, smoothed = raw
+            P_sem[t] = S[t]
+        else:
+            # Blend raw grid with previously smoothed grid
+            P_sem[t] = alpha * S[t] + (1 - alpha) * prev
+
+        prev = P_sem[t]
+
+    #returns a dict
+    return P_sem
+
+
+def run(log_file_path: Path, debugging: bool = False, temperature: float = 1.5, alpha: float = 0.6):
     clip = semantic_data_loader(log_file_path)
-    grids = accumulate_grids(clip, temperature=temperature)
-    debugging_statements(f"Generated grids for clip from file: {log_file_path} grids: {grids.keys()}", debug=debugging)
+    S = accumulate_grids(clip, temperature=temperature)
+    P_sem = smooth_grids(S, alpha=alpha)
+
+    # Debug statements
+    debugging_statements(
+        f"Generated raw S[t] grids for seconds: {list(S.keys())}",
+        debug=debugging
+    )
+
+    debugging_statements(
+        f"Generated smoothed P_sem[t] grids for seconds: {list(P_sem.keys())}",
+        debug=debugging
+    )
+
+    
 
 def debugging_statements(message: str, debug: bool = False):
     if debug:
