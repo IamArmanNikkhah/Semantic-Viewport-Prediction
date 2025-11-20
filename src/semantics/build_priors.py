@@ -3,13 +3,11 @@ import argparse
 import numpy as np
 from os import path
 from pathlib import Path
-from detection_type import Detection, SEMANTIC_CLASSES
+from semantics.detection_type import Detection
+from common.interfaces import DEFAULT_CLASSES, TILE_ROWS, TILE_COLS
 
-#CONSTANTS
-K = len(SEMANTIC_CLASSES)
-ROWS = 6
-COLUMNS = 12
-
+# CONSTANTS
+K = len(DEFAULT_CLASSES)
 # Creating a loader for the data that would be given in either JSON or CSV file
 
 def semantic_data_loader(log_file_path: str | Path):
@@ -31,8 +29,10 @@ def parse_csv_log(log_file_path) -> list[Detection]:
 
 # STEP 2: creating a grid per detection second from the detection list (which is per clip)
 # the grid is S[t] in the shape of (K, 6, 12) where K is the number of semantic classes
-def accumulate_grids(clip_detections: list[Detection], temperature: float = 1.5, rate_hz: float = 1.0,) -> dict[int,np.ndarray]:
-    S = {} # hold all the grids per second of the clip
+
+
+def accumulate_grids(clip_detections: list[Detection], temperature: float = 1.5, rate_hz: float = 1.0,) -> dict[int, np.ndarray]:
+    S = {}  # hold all the grids per second of the clip
 
     # if there is not a grid for second t, create one, else use the existing one
     for detection in clip_detections:
@@ -40,15 +40,17 @@ def accumulate_grids(clip_detections: list[Detection], temperature: float = 1.5,
         # if grid for second t does not exist, create one
         if t not in S:
             # creating a grid all set to zero
-            S[t] = np.zeros((K, ROWS, COLUMNS))
-        
-        semantic_number = SEMANTIC_CLASSES.index(detection.identified_semantic_class) # get the correct sementic class to know which grid to update
-        
-        # getting the row and column in the grid from the tile_id
-        row = detection.tile_id // COLUMNS
-        col = detection.tile_id % COLUMNS
+            S[t] = np.zeros((K, TILE_ROWS, TILE_COLS))
 
-        #STEP 3: Temperature scaling for confidence
+        # get the correct sementic class to know which grid to update
+        semantic_number = DEFAULT_CLASSES.index(
+            detection.identified_semantic_class)
+
+        # getting the row and column in the grid from the tile_id
+        row = detection.tile_id // TILE_COLS
+        col = detection.tile_id % TILE_COLS
+
+        # STEP 3: Temperature scaling for confidence
         scaled_confidence = detection.confidence ** (1 / temperature)
         S[t][semantic_number, row, col] += scaled_confidence
 
@@ -93,8 +95,6 @@ def run(log_file_path: Path, debugging: bool = False, temperature: float = 1.5, 
         f"Cadence (rate_hz): {rate_hz}",
         debug=debugging,
     )
-    
-
 def debugging_statements(message: str, debug: bool = False):
     if debug:
         print(f"[DEBUG] {message}")

@@ -1,16 +1,6 @@
 from dataclasses import dataclass
 
-SEMANTIC_CLASSES: list[str] = [
-    "faces",
-    "bodies",
-    "vehicles",
-    "animals",
-    "text",
-    "horizon/skyline",
-    "moving_objects",
-    "active_speaker",
-]
-
+# Data class to hold detection information
 @dataclass
 class Detection:
     timestamp: float
