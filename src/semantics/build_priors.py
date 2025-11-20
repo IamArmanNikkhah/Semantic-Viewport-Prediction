@@ -31,7 +31,7 @@ def parse_csv_log(log_file_path) -> list[Detection]:
 
 # STEP 2: creating a grid per detection second from the detection list (which is per clip)
 # the grid is S[t] in the shape of (K, 6, 12) where K is the number of semantic classes
-def accumulate_grids(clip_detections: list[Detection], temperature: float = 1.5) -> dict[int,np.ndarray]:
+def accumulate_grids(clip_detections: list[Detection], temperature: float = 1.5, rate_hz: float = 1.0,) -> dict[int,np.ndarray]:
     S = {} # hold all the grids per second of the clip
 
     # if there is not a grid for second t, create one, else use the existing one
@@ -73,7 +73,7 @@ def smooth_grids(S: dict[int, np.ndarray], alpha: float = 0.6) -> dict[int, np.n
     return P_sem
 
 
-def run(log_file_path: Path, debugging: bool = False, temperature: float = 1.5, alpha: float = 0.6):
+def run(log_file_path: Path, debugging: bool = False, temperature: float = 1.5, alpha: float = 0.6, rate_hz: float = 1.0,):
     clip = semantic_data_loader(log_file_path)
     S = accumulate_grids(clip, temperature=temperature)
     P_sem = smooth_grids(S, alpha=alpha)
@@ -89,6 +89,10 @@ def run(log_file_path: Path, debugging: bool = False, temperature: float = 1.5, 
         debug=debugging
     )
 
+    debugging_statements(
+        f"Cadence (rate_hz): {rate_hz}",
+        debug=debugging,
+    )
     
 
 def debugging_statements(message: str, debug: bool = False):
@@ -104,6 +108,10 @@ def parse_arguments():
                         help="Enable debugging statements output")
     parser.add_argument("--temperature", type=float, default=1.5,
                         help="Temperature for confidence scaling (default: 1.5)")
+    parser.add_argument("--alpha", type=float, default=0.6,
+                        help="EMA smoothing factor (default: 0.6)")
+    parser.add_argument("--rate_hz", type=float, default=1.0,
+                        help="Cadence of semantic priors in Hz (e.g., 0.5, 1.0, 2.0)")
     return parser.parse_args()
 
 if __name__ == "__main__":
