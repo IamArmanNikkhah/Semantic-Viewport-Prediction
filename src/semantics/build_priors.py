@@ -1,0 +1,119 @@
+import json
+import argparse
+import numpy as np
+from os import path
+from pathlib import Path
+from detection_type import Detection, SEMANTIC_CLASSES
+
+#CONSTANTS
+K = len(SEMANTIC_CLASSES)
+ROWS = 6
+COLUMNS = 12
+
+# Creating a loader for the data that would be given in either JSON or CSV file
+
+def semantic_data_loader(log_file_path: str | Path):
+    log_file_path = Path(log_file_path)
+    # getting the log file extension
+    _, file_extension = path.splitext(log_file_path.name)
+    if file_extension == '.json':
+        return parse_json_log(log_file_path)
+    elif file_extension == '.csv':
+        return parse_csv_log(log_file_path)
+
+#TO DO: Implement JSON log parsing logic
+def parse_json_log(log_file_path) -> list[Detection]:
+    pass
+    
+#TO DO: Implement CSV log parsing logic
+def parse_csv_log(log_file_path) -> list[Detection]:
+    pass
+
+# STEP 2: creating a grid per detection second from the detection list (which is per clip)
+# the grid is S[t] in the shape of (K, 6, 12) where K is the number of semantic classes
+def accumulate_grids(clip_detections: list[Detection], temperature: float = 1.5, rate_hz: float = 1.0,) -> dict[int,np.ndarray]:
+    S = {} # hold all the grids per second of the clip
+
+    # if there is not a grid for second t, create one, else use the existing one
+    for detection in clip_detections:
+        t = int(detection.timestamp)
+        # if grid for second t does not exist, create one
+        if t not in S:
+            # creating a grid all set to zero
+            S[t] = np.zeros((K, ROWS, COLUMNS))
+        
+        semantic_number = SEMANTIC_CLASSES.index(detection.identified_semantic_class) # get the correct sementic class to know which grid to update
+        
+        # getting the row and column in the grid from the tile_id
+        row = detection.tile_id // COLUMNS
+        col = detection.tile_id % COLUMNS
+
+        #STEP 3: Temperature scaling for confidence
+        scaled_confidence = detection.confidence ** (1 / temperature)
+        S[t][semantic_number, row, col] += scaled_confidence
+
+    return S
+
+# STEP 4: Temporal smoothing using Exponential Moving Average (EMA)
+def smooth_grids(S: dict[int, np.ndarray], alpha: float = 0.6) -> dict[int, np.ndarray]:
+    P_sem = {}
+    prev = None
+
+    for t in sorted(S.keys()):
+        if prev is None:
+            # First second has no history, smoothed = raw
+            P_sem[t] = S[t]
+        else:
+            # Blend raw grid with previously smoothed grid
+            P_sem[t] = alpha * S[t] + (1 - alpha) * prev
+
+        prev = P_sem[t]
+
+    #returns a dict
+    return P_sem
+
+
+def run(log_file_path: Path, debugging: bool = False, temperature: float = 1.5, alpha: float = 0.6, rate_hz: float = 1.0,):
+    clip = semantic_data_loader(log_file_path)
+    S = accumulate_grids(clip, temperature=temperature)
+    P_sem = smooth_grids(S, alpha=alpha)
+
+    # Debug statements
+    debugging_statements(
+        f"Generated raw S[t] grids for seconds: {list(S.keys())}",
+        debug=debugging
+    )
+
+    debugging_statements(
+        f"Generated smoothed P_sem[t] grids for seconds: {list(P_sem.keys())}",
+        debug=debugging
+    )
+
+    debugging_statements(
+        f"Cadence (rate_hz): {rate_hz}",
+        debug=debugging,
+    )
+    
+
+def debugging_statements(message: str, debug: bool = False):
+    if debug:
+        print(f"[DEBUG] {message}")
+
+def parse_arguments():
+    parser = argparse.ArgumentParser(
+        description="Parse log files and save as parquet.")
+    parser.add_argument("log_file_path", type=Path,
+                        help="Path to the log file to parse.")
+    parser.add_argument("--debugging", action="store_true",
+                        help="Enable debugging statements output")
+    parser.add_argument("--temperature", type=float, default=1.5,
+                        help="Temperature for confidence scaling (default: 1.5)")
+    parser.add_argument("--alpha", type=float, default=0.6,
+                        help="EMA smoothing factor (default: 0.6)")
+    parser.add_argument("--rate_hz", type=float, default=1.0,
+                        help="Cadence of semantic priors in Hz (e.g., 0.5, 1.0, 2.0)")
+    return parser.parse_args()
+
+if __name__ == "__main__":
+    args = parse_arguments()
+    run(**vars(args))
