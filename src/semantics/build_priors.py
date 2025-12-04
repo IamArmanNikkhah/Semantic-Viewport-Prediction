@@ -5,9 +5,69 @@ from os import path
 from pathlib import Path
 from semantics.detection_type import Detection
 from common.interfaces import DEFAULT_CLASSES, TILE_ROWS, TILE_COLS
+from transformers import OwlViTProcessor, OwlViTForObjectDetection
+from PIL import Image
+import cv2
+import torch
+
+processor = OwlViTProcessor.from_pretrained("google/owlvit-base-patch32")
+model = OwlViTForObjectDetection.from_pretrained("google/owlvit-base-patch32")
+model.eval()
 
 # CONSTANTS
 K = len(DEFAULT_CLASSES)
+FRAME_RATE_HZ = 1.0  # desired sampling rate in Hz
+
+# STEP 1: Extract frames from video each in a frame rate
+def frame_extractor(video_path: str, output_folder: str, debug: bool = False):
+    video = cv2.VideoCapture(video_path)  # opening the video file
+
+    # checking if the video was opened successfully
+    if video is None or not video.isOpened():
+        print(f"Error: Could not open video: {video_path}")
+        return
+
+    # getting the frames per seconf of the video to know how many frames to skip
+    video_fps = video.get(cv2.CAP_PROP_FPS)
+
+    # printing the fps for debugging
+    debugging_statements(f"Video {video_path} FPS: {video_fps}", debug=debug)
+
+    # calculating how many frames to skip to extract 1 frame every second
+    frames_per_sample = int(video_fps // FRAME_RATE_HZ)
+
+    frame_num = 0
+    while True:
+        valid_frame, frame = video.read()  # reading a frame from the video
+
+        # breaking the loop if there are no more frames
+        if not valid_frame:
+            break
+
+        # saving only 1 frame every second using the calculated frames_per_sample
+        if frame_num % frames_per_sample == 0:
+            cv2.imwrite(f"{output_folder}/frame_{frame_num}.jpg", frame)
+
+        frame_num += 1
+
+    video.release()  # releasing the video file
+
+# every frame should be processed to extract the semantics
+def inference_frame(frame_path: str, debug: bool = False):
+    frame = Image.open(frame_path)  # opening the image frame
+    
+    # preparing the inputs for the model
+    inputs = processor(text=[list(DEFAULT_CLASSES)],images=frame, return_tensors="pt")
+
+    outputs = model(**inputs)  # getting the model outputs
+
+    target_sizes = torch.tensor([(frame.height, frame.width)])
+
+    results = processor.post_process_grounded_object_detection(
+        outputs=outputs, target_sizes=target_sizes, threshold=0.1, text_labels=[list(DEFAULT_CLASSES)]
+    )
+    return results
+
 # Creating a loader for the data that would be given in either JSON or CSV file
 
 def semantic_data_loader(log_file_path: str | Path):
@@ -19,11 +79,10 @@ def semantic_data_loader(log_file_path: str | Path):
     elif file_extension == '.csv':
         return parse_csv_log(log_file_path)
 
-#TO DO: Implement JSON log parsing logic
+# TO DO: Implement JSON log parsing logic
 def parse_json_log(log_file_path) -> list[Detection]:
     pass
-    
-#TO DO: Implement CSV log parsing logic
+# TO DO: Implement CSV log parsing logic
 def parse_csv_log(log_file_path) -> list[Detection]:
     pass
 
@@ -71,14 +130,25 @@ def smooth_grids(S: dict[int, np.ndarray], alpha: float = 0.6) -> dict[int, np.n
 
         prev = P_sem[t]
 
-    #returns a dict
+    # returns a dict
     return P_sem
 
 
-def run(log_file_path: Path, debugging: bool = False, temperature: float = 1.5, alpha: float = 0.6, rate_hz: float = 1.0,):
-    clip = semantic_data_loader(log_file_path)
-    S = accumulate_grids(clip, temperature=temperature)
-    P_sem = smooth_grids(S, alpha=alpha)
+def run(log_file_path: Path, output_folder: Path, debugging: bool = False, temperature: float = 1.5, alpha: float = 0.6, rate_hz: float = 1.0,):
+    # extracting frames from raw MP4 file
+    debugging_statements("starting frame extraction", debug=debugging)
+    frame_extractor(
+        video_path=str(log_file_path),
+        output_folder=str(output_folder),
+        debug=debugging,
+    )
+    debugging_statements(
+        f"Finished extracting frames from {log_file_path} into {output_folder}",
+        debug=debugging,
+    )
+    # clip = semantic_data_loader(log_file_path)
+    # S = accumulate_grids(clip, temperature=temperature)
+    # P_sem = smooth_grids(S, alpha=alpha)
 
     # Debug statements
     debugging_statements(
@@ -104,6 +174,8 @@ def parse_arguments():
         description="Parse log files and save as parquet.")
     parser.add_argument("log_file_path", type=Path,
                         help="Path to the log file to parse.")
+    parser.add_argument("--output-folder", type=Path, default=Path(
+        "extracted_frames"), help="Folder to save extracted frames.")
     parser.add_argument("--debugging", action="store_true",
                         help="Enable debugging statements output")
     parser.add_argument("--temperature", type=float, default=1.5,
