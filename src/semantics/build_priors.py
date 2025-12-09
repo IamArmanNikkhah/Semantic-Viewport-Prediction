@@ -1,10 +1,9 @@
-import json
 import argparse
 import numpy as np
 from os import path
 from pathlib import Path
 from semantics.detection_type import Detection
-from common.interfaces import DEFAULT_CLASSES, TILE_ROWS, TILE_COLS
+from common.interfaces import DEFAULT_CLASSES, TILE_ROWS, TILE_COLS, TileId, Ms
 from transformers import OwlViTProcessor, OwlViTForObjectDetection
 from PIL import Image
 import cv2
@@ -37,6 +36,7 @@ def frame_extractor(video_path: str, output_folder: str, debug: bool = False):
     frames_per_sample = int(video_fps // FRAME_RATE_HZ)
 
     frame_num = 0
+    video_data = []
     while True:
         valid_frame, frame = video.read()  # reading a frame from the video
 
@@ -46,18 +46,25 @@ def frame_extractor(video_path: str, output_folder: str, debug: bool = False):
 
         # saving only 1 frame every second using the calculated frames_per_sample
         if frame_num % frames_per_sample == 0:
-            cv2.imwrite(f"{output_folder}/frame_{frame_num}.jpg", frame)
-
+            #cv2.imwrite(f"{output_folder}/frame_{frame_num}.jpg", frame)
+            frame_color_converted = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            # converting the frame to PIL Image from numpy array when using .read()
+            frame_image = Image.fromarray(frame_color_converted)
+            data = inference_frame(frame_image, video_fps, frame_num, debug)
+            video_data.extend(data)
         frame_num += 1
 
     video.release()  # releasing the video file
+    return video_data
 
 # every frame should be processed to extract the semantics
-def inference_frame(frame_path: str, debug: bool = False):
-    frame = Image.open(frame_path)  # opening the image frame
-    
+
+
+def inference_frame(frame: Image, video_fps: float, frame_num: int, debug: bool = False) -> list[Detection]:
+    timestamp = Ms((frame_num / video_fps)*1000)
     # preparing the inputs for the model
-    inputs = processor(text=[list(DEFAULT_CLASSES)],images=frame, return_tensors="pt")
+    inputs = processor(text=[list(DEFAULT_CLASSES)],
+                       images=frame, return_tensors="pt")
 
     outputs = model(**inputs)  # getting the model outputs
 
@@ -66,7 +73,38 @@ def inference_frame(frame_path: str, debug: bool = False):
     results = processor.post_process_grounded_object_detection(
         outputs=outputs, target_sizes=target_sizes, threshold=0.1, text_labels=[list(DEFAULT_CLASSES)]
     )
-    return results
+
+    result = results[0]
+    boxes, text_labels, scores = result["boxes"], result["labels"], result["scores"]
+
+    detections_list = []  # List to hold Detection objects
+
+    for i in range(len(boxes)):
+        x1, y1, x2, y2 = boxes[i].tolist()
+        center_x = (x1 + x2) / 2
+        center_y = (y1 + y2) / 2
+
+        # converting to tile row and column
+        tile_col = int((center_x / frame.width) * TILE_COLS)
+        tile_row = int((center_y / frame.height) * TILE_ROWS)
+
+        tile_id = TileId(tile_row * TILE_COLS + tile_col)
+        
+        class_index = text_labels[i].item()
+        confidence = scores[i].item()  # Retrieve confidence
+        semantic_class = DEFAULT_CLASSES[class_index]
+
+        detection = Detection(
+            timestamp=timestamp,
+            identified_semantic_class=semantic_class,
+            confidence=confidence,
+            tile_id=tile_id
+        )
+        detections_list.append(detection)
+        debugging_statements(
+            f"frame number: {frame_num}, Object: {semantic_class}, Tile: (R:{tile_row}, C:{tile_col}, ID:{tile_id}), Conf: {confidence:.2f}", debug=debug)
+        # writing to output file
+    return detections_list
 
 # Creating a loader for the data that would be given in either JSON or CSV file
 
@@ -95,7 +133,7 @@ def accumulate_grids(clip_detections: list[Detection], temperature: float = 1.5,
 
     # if there is not a grid for second t, create one, else use the existing one
     for detection in clip_detections:
-        t = int(detection.timestamp)
+        t = int((detection.timestamp)/1000)
         # if grid for second t does not exist, create one
         if t not in S:
             # creating a grid all set to zero
@@ -137,7 +175,9 @@ def smooth_grids(S: dict[int, np.ndarray], alpha: float = 0.6) -> dict[int, np.n
 def run(log_file_path: Path, output_folder: Path, debugging: bool = False, temperature: float = 1.5, alpha: float = 0.6, rate_hz: float = 1.0,):
     # extracting frames from raw MP4 file
     debugging_statements("starting frame extraction", debug=debugging)
-    frame_extractor(
+    video_name = log_file_path.stem
+    final_output_path = Path("../data/raw_detections") / f"{video_name}.pt"
+    raw_detction_data = frame_extractor(
         video_path=str(log_file_path),
         output_folder=str(output_folder),
         debug=debugging,
@@ -146,20 +186,16 @@ def run(log_file_path: Path, output_folder: Path, debugging: bool = False, tempe
         f"Finished extracting frames from {log_file_path} into {output_folder}",
         debug=debugging,
     )
+    #TO DO: writing the raw detection data to a .pt file
+    
     # clip = semantic_data_loader(log_file_path)
     # S = accumulate_grids(clip, temperature=temperature)
     # P_sem = smooth_grids(S, alpha=alpha)
 
     # Debug statements
-    debugging_statements(
-        f"Generated raw S[t] grids for seconds: {list(S.keys())}",
-        debug=debugging
-    )
+    #debugging_statements(f"Generated raw S[t] grids for seconds: {list(S.keys())}",debug=debugging)
 
-    debugging_statements(
-        f"Generated smoothed P_sem[t] grids for seconds: {list(P_sem.keys())}",
-        debug=debugging
-    )
+    #debugging_statements(f"Generated smoothed P_sem[t] grids for seconds: {list(P_sem.keys())}",debug=debugging)
 
     debugging_statements(
         f"Cadence (rate_hz): {rate_hz}",
