@@ -178,7 +178,7 @@ def run(log_file_path: Path, output_folder: Path, debugging: bool = False, tempe
     # extracting frames from raw MP4 file
     debugging_statements("Starting frame extraction...", debug=debugging)
     video_name = log_file_path.stem
-    final_output_path = Path("../data/raw_detections") / f"{video_name}.pt"
+    final_output_path = Path("./data/raw_detections") / f"{video_name}.pt"
     raw_detction_data = frame_extractor(
         video_path=str(log_file_path),
         output_folder=str(output_folder),
@@ -189,7 +189,13 @@ def run(log_file_path: Path, output_folder: Path, debugging: bool = False, tempe
         debug=debugging,
     )
     #TO DO: writing the raw detection data to a .pt file
-    
+    final_output_path.parent.mkdir(parents=True, exist_ok=True)  # Ensure directory exists
+    torch.save(raw_detction_data, final_output_path)
+    debugging_statements(
+        f"Saved raw detection data to {final_output_path}",
+        debug=debugging,
+    )
+
     # clip = semantic_data_loader(log_file_path)
     # S = accumulate_grids(clip, temperature=temperature)
     # P_sem = smooth_grids(S, alpha=alpha)
