@@ -19,6 +19,8 @@ FRAME_RATE_HZ = 1.0  # desired sampling rate in Hz
 
 # STEP 1: Extract frames from video each in a frame rate
 def frame_extractor(video_path: str, output_folder: str, debug: bool = False):
+    
+    debugging_statements(f"Extracting video from {video_path}", debug=debug)
     video = cv2.VideoCapture(video_path)  # opening the video file
 
     # checking if the video was opened successfully
@@ -30,7 +32,7 @@ def frame_extractor(video_path: str, output_folder: str, debug: bool = False):
     video_fps = video.get(cv2.CAP_PROP_FPS)
 
     # printing the fps for debugging
-    debugging_statements(f"Video {video_path} FPS: {video_fps}", debug=debug)
+    debugging_statements(f"VIDEO TITLE: {video_path} \tFPS: {video_fps}", debug=debug)
 
     # calculating how many frames to skip to extract 1 frame every second
     frames_per_sample = int(video_fps // FRAME_RATE_HZ)
@@ -102,7 +104,7 @@ def inference_frame(frame: Image, video_fps: float, frame_num: int, debug: bool 
         )
         detections_list.append(detection)
         debugging_statements(
-            f"frame number: {frame_num}, Object: {semantic_class}, Tile: (R:{tile_row}, C:{tile_col}, ID:{tile_id}), Conf: {confidence:.2f}", debug=debug)
+            f"Frame number: {frame_num},\tObject: {semantic_class} \tTile (row, column): ({tile_row}, {tile_col}, ID:{tile_id}) \tConf: {confidence:.2f}", debug=debug)
         # writing to output file
     return detections_list
 
@@ -174,7 +176,7 @@ def smooth_grids(S: dict[int, np.ndarray], alpha: float = 0.6) -> dict[int, np.n
 
 def run(log_file_path: Path, output_folder: Path, debugging: bool = False, temperature: float = 1.5, alpha: float = 0.6, rate_hz: float = 1.0,):
     # extracting frames from raw MP4 file
-    debugging_statements("starting frame extraction", debug=debugging)
+    debugging_statements("Starting frame extraction...", debug=debugging)
     video_name = log_file_path.stem
     final_output_path = Path("../data/raw_detections") / f"{video_name}.pt"
     raw_detction_data = frame_extractor(
