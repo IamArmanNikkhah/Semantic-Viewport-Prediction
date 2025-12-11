@@ -19,6 +19,8 @@ FRAME_RATE_HZ = 1.0  # desired sampling rate in Hz
 
 # STEP 1: Extract frames from video each in a frame rate
 def frame_extractor(video_path: str, output_folder: str, debug: bool = False):
+    
+    debugging_statements(f"Extracting video from {video_path}", debug=debug)
     video = cv2.VideoCapture(video_path)  # opening the video file
 
     # checking if the video was opened successfully
@@ -30,7 +32,7 @@ def frame_extractor(video_path: str, output_folder: str, debug: bool = False):
     video_fps = video.get(cv2.CAP_PROP_FPS)
 
     # printing the fps for debugging
-    debugging_statements(f"Video {video_path} FPS: {video_fps}", debug=debug)
+    debugging_statements(f"VIDEO TITLE: {video_path} \tFPS: {video_fps}", debug=debug)
 
     # calculating how many frames to skip to extract 1 frame every second
     frames_per_sample = int(video_fps // FRAME_RATE_HZ)
@@ -102,7 +104,7 @@ def inference_frame(frame: Image, video_fps: float, frame_num: int, debug: bool 
         )
         detections_list.append(detection)
         debugging_statements(
-            f"frame number: {frame_num}, Object: {semantic_class}, Tile: (R:{tile_row}, C:{tile_col}, ID:{tile_id}), Conf: {confidence:.2f}", debug=debug)
+            f"Frame number: {frame_num},\tObject: {semantic_class}    \tTile (row, column): ({tile_row}, {tile_col}, ID:{tile_id}) \tConf: {confidence:.2f}", debug=debug)
         # writing to output file
     return detections_list
 
@@ -174,33 +176,65 @@ def smooth_grids(S: dict[int, np.ndarray], alpha: float = 0.6) -> dict[int, np.n
 
 def run(log_file_path: Path, output_folder: Path, debugging: bool = False, temperature: float = 1.5, alpha: float = 0.6, rate_hz: float = 1.0,):
     # extracting frames from raw MP4 file
-    debugging_statements("starting frame extraction", debug=debugging)
+    debugging_statements("Starting frame extraction...", debug=debugging)
     video_name = log_file_path.stem
-    final_output_path = Path("../data/raw_detections") / f"{video_name}.pt"
-    raw_detction_data = frame_extractor(
+    raw_detections_path = Path("./data/raw_detections") / f"{video_name}.pt"
+    raw_detections_path.parent.mkdir(parents=True, exist_ok=True)
+    raw_detection_data = frame_extractor(
         video_path=str(log_file_path),
         output_folder=str(output_folder),
         debug=debugging,
     )
+
     debugging_statements(
         f"Finished extracting frames from {log_file_path} into {output_folder}",
         debug=debugging,
     )
-    #TO DO: writing the raw detection data to a .pt file
+
+    # Save raw detection data (Do we really need to save the raw detections to tensor?)
+    torch.save(raw_detection_data, raw_detections_path)
+    debugging_statements(
+        f"Saved raw detection data to {raw_detections_path}",
+        debug=debugging,
+    )
+
+    # Accumulate detections into grids
+    debugging_statements("Accumulating detections into grids...", debug=debugging)
+    S = accumulate_grids(raw_detection_data, temperature=temperature, rate_hz=rate_hz)
+    debugging_statements(
+        f"Generated raw S[t] grids for seconds: {list(S.keys())}",
+        debug=debugging
+    )
+
+    # Apply temporal smoothing to grids
+    debugging_statements("Applying temporal smoothing to grids...", debug=debugging)
+    P_sem = smooth_grids(S, alpha=alpha)
+    debugging_statements(
+        f"Generated smoothed P_sem[t] grids for seconds: {list(P_sem.keys())}",
+        debug=debugging
+    )
+
+    # Convert smoothed grids dictionary to a stacked tensor
+    # Stack grids in temporal order: shape will be (T, K, TILE_ROWS, TILE_COLS)
+    debugging_statements("Converting smoothed grids to tensor...", debug=debugging)
+    sorted_times = sorted(P_sem.keys())
+    stacked_grids = np.stack([P_sem[t] for t in sorted_times], axis=0)
+    semantic_priors_tensor = torch.from_numpy(stacked_grids).float()
     
-    # clip = semantic_data_loader(log_file_path)
-    # S = accumulate_grids(clip, temperature=temperature)
-    # P_sem = smooth_grids(S, alpha=alpha)
-
-    # Debug statements
-    #debugging_statements(f"Generated raw S[t] grids for seconds: {list(S.keys())}",debug=debugging)
-
-    #debugging_statements(f"Generated smoothed P_sem[t] grids for seconds: {list(P_sem.keys())}",debug=debugging)
+    # Save semantic priors tensor
+    semantic_priors_path = Path("./data/semantic_priors/") / f"{video_name}.pt"
+    semantic_priors_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(semantic_priors_tensor, semantic_priors_path)
+    debugging_statements(
+        f"Saved semantic priors tensor with shape {semantic_priors_tensor.shape} to {semantic_priors_path}",
+        debug=debugging,
+    )
 
     debugging_statements(
         f"Cadence (rate_hz): {rate_hz}",
         debug=debugging,
     )
+
 def debugging_statements(message: str, debug: bool = False):
     if debug:
         print(f"[DEBUG] {message}")
