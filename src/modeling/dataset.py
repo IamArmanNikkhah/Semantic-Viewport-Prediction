@@ -58,7 +58,7 @@ class HeadMotionDataset(Dataset):
         semantic_path = row["semantic_path"]
 
         # 2. Load motion CSV
-        df = pd.read_csv(csv_path)
+        df = pd.read_parquet(csv_path)
 
         # make sure the requested frame index exists.
         if frame_idx < 0 or frame_idx >= len(df):
