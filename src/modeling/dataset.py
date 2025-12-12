@@ -96,8 +96,12 @@ class HeadMotionDataset(Dataset):
         # 4. Load semantic tensor
         semantic_tensor = torch.load(semantic_path)
 
-        # Ensure it is a float tensor so it can go into nn.Linear etc.
-        semantic_tensor = semantic_tensor.float()
+        # If semantic priors are time series: [T, 11, 4, 6], select the correct timestep
+        if semantic_tensor.dim() == 4:
+            # frame_idx is 60Hz; semantic is 1Hz -> map frames to seconds
+            sec_idx = frame_idx // 60
+            sec_idx = min(sec_idx, semantic_tensor.shape[0] - 1)
+            semantic_tensor = semantic_tensor[sec_idx]   # -> [11, 4, 6]    
 
         # 5. Build prediction target
         target_row = df[[self.yaw_col, self.pitch_col]].iloc[frame_idx].values

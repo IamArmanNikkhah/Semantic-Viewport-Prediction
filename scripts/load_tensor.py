@@ -35,9 +35,6 @@ def main():
         print(f"Type: {type(tensor)}")
         
         if isinstance(tensor, torch.Tensor):
-            print(tensor.keys())
-            print(f" Label Map: {tensor['meta']['label_map']}")
-
             print(f"Shape: {tensor.shape}")
             print(f"Dtype: {tensor.dtype}")
             print(f"Device: {tensor.device}")
