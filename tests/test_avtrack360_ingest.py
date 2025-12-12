@@ -53,3 +53,4 @@ def test_angle_ranges_are_sane():
 
     # Roll typically in [-pi, pi] as well
     assert np.abs(roll).max() <= np.pi + 1e-3
+.ta

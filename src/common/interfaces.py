@@ -31,11 +31,12 @@ from typing import (
 )
 
 # ---------- Constants / global invariants ----------
-TILE_ROWS: int = 6
-TILE_COLS: int = 12
-NUM_TILES: int = TILE_ROWS * TILE_COLS  # 72
+TILE_ROWS: int = 4
+TILE_COLS: int = 6
+NUM_TILES: int = TILE_ROWS * TILE_COLS  # 24
 
 # Default taxonomy (can be swapped, but keep K and order consistent at runtime)
+'''
 DEFAULT_CLASSES: Tuple[str, ...] = (
     "face",
     "body",
@@ -45,6 +46,20 @@ DEFAULT_CLASSES: Tuple[str, ...] = (
     "horizon_skyline",
     "moving_object",
     "active_speaker",
+)
+'''
+DEFAULT_CLASSES: Tuple[str, ...] = (
+    "human face",
+    "person",
+    "vehicle",
+    "animal",
+    "text logo",
+    "sports ball",
+    "fireworks",
+    "waterfall",
+    "toy gun",
+    "mountain",
+    "building",
 )
 
 # ---------- Strongly-typed primitives ----------

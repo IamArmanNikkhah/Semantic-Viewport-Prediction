@@ -208,12 +208,19 @@ def run(log_file_path: Path, debugging: bool = False):
     debugging_statements(f"Saved parsed logs", debugging)
 
     user = Path(log_file_path).stem
-    clip = Path(parsed_logs[0].filename).stem
-    parquet_path = Path(f"data/standardized/user{user}_clip{clip}.parquet")
-    resample_to_60hz(parquet_path)
+    standardized_dir = Path("data/standardized")
 
-    vel_source = parquet_path.with_name(parquet_path.stem + "_60hz.parquet")
-    calculate_angular_velocity(vel_source)
+    for parquet_path in sorted(standardized_dir.glob(f"user{user}_clip*.parquet")):
+        stem = parquet_path.stem
+        if "_60hz" in stem or "_60hz_vel" in stem:
+            continue
+
+        debugging_statements(f"Resampling to 60 Hz: {parquet_path}", debugging)
+        resample_to_60hz(parquet_path)
+
+        vel_source = parquet_path.with_name(parquet_path.stem + "_60hz.parquet")
+        debugging_statements(f"Computing angular velocity: {vel_source}", debugging)
+        calculate_angular_velocity(vel_source)
 
 # function for debugging statements on/off
 
