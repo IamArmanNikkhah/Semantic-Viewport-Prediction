@@ -21,15 +21,12 @@ This repository contains the source code for a 6-week undergraduate research pro
 ├── notebooks/         # Jupyter notebooks for exploration and analysis
 ├── scripts/           # Standalone scripts (data processing, experiment runners)
 ├── src/               # Main source code
-│   ├── abr/           # ABR and tile scheduling logic (MCKP)
-│   ├── bandit/        # Contextual bandit controller
 │   ├── common/        # Shared utilities (logger, tiling geometry)
 │   ├── personalize/   # Personalization head training and fusion
-│   ├── predictor/     # FoV prediction model
+│   ├── modeling/     # FoV prediction model
 │   └── semantics/     # Semantic prior generation
 ├── tests/             # Unit tests for key components
 ├── .gitignore         # Files and directories ignored by git
-├── main.py            # Main simulation entry point
 ├── README.md          # This file
 └── requirements.txt   # Python project dependencies
 ```
@@ -41,13 +38,13 @@ This repository contains the source code for a 6-week undergraduate research pro
 1.  **Clone the repository:**
     ```bash
     git clone <your-repository-url>
-    cd 360-streaming-semantics-project
+    cd Semantic-Viewport-Prediction
     ```
 
 2.  **Create a Python virtual environment:**
     ```bash
-    python -m venv venv
-    source venv/bin/activate  # On Windows, use `venv\Scripts\activate`
+    python -m venv .venv
+    source .venv/bin/activate  # On Windows, use `.venv\Scripts\activate`
     ```
 
 3.  **Install the required dependencies:**
@@ -55,24 +52,16 @@ This repository contains the source code for a 6-week undergraduate research pro
     pip install -r requirements.txt
     ```
 
-### How to Run the Simulation
-
-Execute the main simulation script from the root of the project directory:
-
-```bash
-python main.py --mode proposed --user U01 --video V01 --network-trace traces/trace1.json
-```
-
----
-
 ### AVTrack360 Ingestion & Alignment (Week 1)
 
 We ingest AVTrack360 head–motion logs and standardize them under data/standardized/.
 
 1. Parse and standardize
 
-    python -m ingest.scripts.avtrack360_loader data/raw/avtrack360/10.json --debugging
-
+    ```
+   python -m ingest.scripts.avtrack360_loader .\data\raw\avtrack360\<user_number>.json [--debugging]
+    ```
+   
 This produces (example):
 
     data/standardized/user10_clip6.parquet – normalized angles + raw timestamps (sec)
@@ -81,10 +70,12 @@ This produces (example):
 
 2. Alignment report (data health check)
 
+    ```
     python -m ingest.scripts.make_alignment_report \
         data/raw/avtrack360/10.json \
         --clip 6 \
         --user 10
+    ```
 
 This generates:
 
@@ -109,6 +100,32 @@ For quick experiments, we use a pre-processed slice:
         standardized/{user10_clip6.parquet, user10_clip6_60hz.parquet, user10_clip6_60hz_vel.parquet}
         reports/{user10_clip6_alignment.json, user10_clip6_alignment.png, user10_clip6_summary.md}
 
-All early modules (FoV predictor, bandit, ABR) can be developed against this dev subset.
+### Building Semantic Priors Tile-grid from Video (Week 2)
+
+This command runns the `build_priors.py` script under `./scripts` to build and output the PyTorch tensor file (.pt) that contains the Semantic Priors map of tiles.
+
+The shape of this tensor is (sequence length, number of semantic classes, rows, columns) which should look something like `[T, 11, 4, 6]`
+
+```
+python ./src/semantics/build_priors.py .\data\videos\<video number>.mp4 [--debugging]
+```
+
+### Running Head Motion Dataset (Week 3)
+
+This module is used to convert the user motion sequence data in the parquet files generated from AVTrack360 Ingestion & Alignment into a tensor that can be concatenated with the semantic prior tensor of a video.
+
+```
+python ./scripts/run_dataset.py <video_number>
+```
+
+### Traiing and Running the Fusion model for One Video (Week 4)
+
+Running the fusion model will take an 80/20 training split on the user motion tensors output by the Head Motion Dataset for a given video before outputting predictions for the 2 testing users.
+
+Results are output to `./results/clip_<video_number>`
+
+```
+python -m scripts.train_fusion <video_number> --epochs <number_of_epochs>
+```
 
 ---

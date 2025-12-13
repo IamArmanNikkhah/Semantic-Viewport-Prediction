@@ -1,0 +1,261 @@
+import argparse
+import numpy as np
+from os import path
+from pathlib import Path
+from semantics.detection_type import Detection
+from common.interfaces import DEFAULT_CLASSES, TILE_ROWS, TILE_COLS, TileId, Ms
+from transformers import OwlViTProcessor, OwlViTForObjectDetection
+from PIL import Image
+import cv2
+import torch
+
+processor = OwlViTProcessor.from_pretrained("google/owlvit-base-patch32")
+model = OwlViTForObjectDetection.from_pretrained("google/owlvit-base-patch32")
+model.eval()
+
+# CONSTANTS
+K = len(DEFAULT_CLASSES)
+FRAME_RATE_HZ = 1.0  # desired sampling rate in Hz
+
+# STEP 1: Extract frames from video each in a frame rate
+def frame_extractor(video_path: str, output_folder: str, debug: bool = False):
+    
+    debugging_statements(f"Extracting video from {video_path}", debug=debug)
+    video = cv2.VideoCapture(video_path)  # opening the video file
+
+    # checking if the video was opened successfully
+    if video is None or not video.isOpened():
+        print(f"Error: Could not open video: {video_path}")
+        return
+
+    # getting the frames per seconf of the video to know how many frames to skip
+    video_fps = video.get(cv2.CAP_PROP_FPS)
+
+    # printing the fps for debugging
+    debugging_statements(f"VIDEO TITLE: {video_path} \tFPS: {video_fps}", debug=debug)
+
+    # calculating how many frames to skip to extract 1 frame every second
+    frames_per_sample = int(video_fps // FRAME_RATE_HZ)
+
+    frame_num = 0
+    video_data = []
+    while True:
+        valid_frame, frame = video.read()  # reading a frame from the video
+
+        # breaking the loop if there are no more frames
+        if not valid_frame:
+            break
+
+        # saving only 1 frame every second using the calculated frames_per_sample
+        if frame_num % frames_per_sample == 0:
+            #cv2.imwrite(f"{output_folder}/frame_{frame_num}.jpg", frame)
+            frame_color_converted = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            # converting the frame to PIL Image from numpy array when using .read()
+            frame_image = Image.fromarray(frame_color_converted)
+            data = inference_frame(frame_image, video_fps, frame_num, debug)
+            video_data.extend(data)
+        frame_num += 1
+
+    video.release()  # releasing the video file
+    return video_data
+
+# every frame should be processed to extract the semantics
+
+
+def inference_frame(frame: Image, video_fps: float, frame_num: int, debug: bool = False) -> list[Detection]:
+    timestamp = Ms((frame_num / video_fps)*1000)
+    # preparing the inputs for the model
+    inputs = processor(text=[list(DEFAULT_CLASSES)],
+                       images=frame, return_tensors="pt")
+
+    outputs = model(**inputs)  # getting the model outputs
+
+    target_sizes = torch.tensor([(frame.height, frame.width)])
+
+    results = processor.post_process_grounded_object_detection(
+        outputs=outputs, target_sizes=target_sizes, threshold=0.1, text_labels=[list(DEFAULT_CLASSES)]
+    )
+
+    result = results[0]
+    boxes, text_labels, scores = result["boxes"], result["labels"], result["scores"]
+
+    detections_list = []  # List to hold Detection objects
+
+    for i in range(len(boxes)):
+        x1, y1, x2, y2 = boxes[i].tolist()
+        center_x = (x1 + x2) / 2
+        center_y = (y1 + y2) / 2
+
+        # converting to tile row and column
+        tile_col = int((center_x / frame.width) * TILE_COLS)
+        tile_row = int((center_y / frame.height) * TILE_ROWS)
+
+        tile_id = TileId(tile_row * TILE_COLS + tile_col)
+        
+        class_index = text_labels[i].item()
+        confidence = scores[i].item()  # Retrieve confidence
+        semantic_class = DEFAULT_CLASSES[class_index]
+
+        detection = Detection(
+            timestamp=timestamp,
+            identified_semantic_class=semantic_class,
+            confidence=confidence,
+            tile_id=tile_id
+        )
+        detections_list.append(detection)
+        debugging_statements(
+            f"Frame number: {frame_num},\tObject: {semantic_class}    \tTile (row, column): ({tile_row}, {tile_col}, ID:{tile_id}) \tConf: {confidence:.2f}", debug=debug)
+        # writing to output file
+    return detections_list
+
+# Creating a loader for the data that would be given in either JSON or CSV file
+
+def semantic_data_loader(log_file_path: str | Path):
+    log_file_path = Path(log_file_path)
+    # getting the log file extension
+    _, file_extension = path.splitext(log_file_path.name)
+    if file_extension == '.json':
+        return parse_json_log(log_file_path)
+    elif file_extension == '.csv':
+        return parse_csv_log(log_file_path)
+
+# TO DO: Implement JSON log parsing logic
+def parse_json_log(log_file_path) -> list[Detection]:
+    pass
+# TO DO: Implement CSV log parsing logic
+def parse_csv_log(log_file_path) -> list[Detection]:
+    pass
+
+# STEP 2: creating a grid per detection second from the detection list (which is per clip)
+# the grid is S[t] in the shape of (K, 6, 12) where K is the number of semantic classes
+
+
+def accumulate_grids(clip_detections: list[Detection], temperature: float = 1.5, rate_hz: float = 1.0,) -> dict[int, np.ndarray]:
+    S = {}  # hold all the grids per second of the clip
+
+    # if there is not a grid for second t, create one, else use the existing one
+    for detection in clip_detections:
+        t = int((detection.timestamp)/1000)
+        # if grid for second t does not exist, create one
+        if t not in S:
+            # creating a grid all set to zero
+            S[t] = np.zeros((K, TILE_ROWS, TILE_COLS))
+
+        # get the correct sementic class to know which grid to update
+        semantic_number = DEFAULT_CLASSES.index(
+            detection.identified_semantic_class)
+
+        # getting the row and column in the grid from the tile_id
+        row = detection.tile_id // TILE_COLS
+        col = detection.tile_id % TILE_COLS
+
+        # STEP 3: Temperature scaling for confidence
+        scaled_confidence = detection.confidence ** (1 / temperature)
+        S[t][semantic_number, row, col] += scaled_confidence
+
+    return S
+
+# STEP 4: Temporal smoothing using Exponential Moving Average (EMA)
+def smooth_grids(S: dict[int, np.ndarray], alpha: float = 0.6) -> dict[int, np.ndarray]:
+    P_sem = {}
+    prev = None
+
+    for t in sorted(S.keys()):
+        if prev is None:
+            # First second has no history, smoothed = raw
+            P_sem[t] = S[t]
+        else:
+            # Blend raw grid with previously smoothed grid
+            P_sem[t] = alpha * S[t] + (1 - alpha) * prev
+
+        prev = P_sem[t]
+
+    # returns a dict
+    return P_sem
+
+
+def run(log_file_path: Path, output_folder: Path, debugging: bool = False, temperature: float = 1.5, alpha: float = 0.6, rate_hz: float = 1.0,):
+    # extracting frames from raw MP4 file
+    debugging_statements("Starting frame extraction...", debug=debugging)
+    video_name = log_file_path.stem
+    raw_detections_path = Path("./data/raw_detections") / f"{video_name}.pt"
+    raw_detections_path.parent.mkdir(parents=True, exist_ok=True)
+    raw_detection_data = frame_extractor(
+        video_path=str(log_file_path),
+        output_folder=str(output_folder),
+        debug=debugging,
+    )
+
+    debugging_statements(
+        f"Finished extracting frames from {log_file_path} into {output_folder}",
+        debug=debugging,
+    )
+
+    # Save raw detection data (Do we really need to save the raw detections to tensor?)
+    torch.save(raw_detection_data, raw_detections_path)
+    debugging_statements(
+        f"Saved raw detection data to {raw_detections_path}",
+        debug=debugging,
+    )
+
+    # Accumulate detections into grids
+    debugging_statements("Accumulating detections into grids...", debug=debugging)
+    S = accumulate_grids(raw_detection_data, temperature=temperature, rate_hz=rate_hz)
+    debugging_statements(
+        f"Generated raw S[t] grids for seconds: {list(S.keys())}",
+        debug=debugging
+    )
+
+    # Apply temporal smoothing to grids
+    debugging_statements("Applying temporal smoothing to grids...", debug=debugging)
+    P_sem = smooth_grids(S, alpha=alpha)
+    debugging_statements(
+        f"Generated smoothed P_sem[t] grids for seconds: {list(P_sem.keys())}",
+        debug=debugging
+    )
+
+    # Convert smoothed grids dictionary to a stacked tensor
+    # Stack grids in temporal order: shape will be (T, K, TILE_ROWS, TILE_COLS)
+    debugging_statements("Converting smoothed grids to tensor...", debug=debugging)
+    sorted_times = sorted(P_sem.keys())
+    stacked_grids = np.stack([P_sem[t] for t in sorted_times], axis=0)
+    semantic_priors_tensor = torch.from_numpy(stacked_grids).float()
+    
+    # Save semantic priors tensor
+    semantic_priors_path = Path("./data/semantic_priors/") / f"{video_name}.pt"
+    semantic_priors_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(semantic_priors_tensor, semantic_priors_path)
+    debugging_statements(
+        f"Saved semantic priors tensor with shape {semantic_priors_tensor.shape} to {semantic_priors_path}",
+        debug=debugging,
+    )
+
+    debugging_statements(
+        f"Cadence (rate_hz): {rate_hz}",
+        debug=debugging,
+    )
+
+def debugging_statements(message: str, debug: bool = False):
+    if debug:
+        print(f"[DEBUG] {message}")
+
+def parse_arguments():
+    parser = argparse.ArgumentParser(
+        description="Parse log files and save as parquet.")
+    parser.add_argument("log_file_path", type=Path,
+                        help="Path to the log file to parse.")
+    parser.add_argument("--output-folder", type=Path, default=Path(
+        "extracted_frames"), help="Folder to save extracted frames.")
+    parser.add_argument("--debugging", action="store_true",
+                        help="Enable debugging statements output")
+    parser.add_argument("--temperature", type=float, default=1.5,
+                        help="Temperature for confidence scaling (default: 1.5)")
+    parser.add_argument("--alpha", type=float, default=0.6,
+                        help="EMA smoothing factor (default: 0.6)")
+    parser.add_argument("--rate_hz", type=float, default=1.0,
+                        help="Cadence of semantic priors in Hz (e.g., 0.5, 1.0, 2.0)")
+    return parser.parse_args()
+
+if __name__ == "__main__":
+    args = parse_arguments()
+    run(**vars(args))
